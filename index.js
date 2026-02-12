@@ -17,9 +17,9 @@ app.get('/health', (req, res) => {
 // Endpoint principal
 app.get('/', (req, res) => {
   res.json({
-    message: '¡Hola desde AWS ECS!',
+    message: '¡Hola desde Render con CI/CD!',
     version: process.env.APP_VERSION || '1.0.0',
-    deployment: process.env.DEPLOYMENT_TYPE || 'blue',
+    deployment: process.env.DEPLOYMENT_TYPE || 'production',
     timestamp: new Date().toISOString()
   });
 });
@@ -27,10 +27,11 @@ app.get('/', (req, res) => {
 // Endpoint de información
 app.get('/info', (req, res) => {
   res.json({
-    app: 'CI/CD ECS Demo',
+    app: 'CI/CD con Render + GitHub Actions',
     environment: process.env.NODE_ENV || 'development',
     version: process.env.APP_VERSION || '1.0.0',
-    deployment: process.env.DEPLOYMENT_TYPE || 'blue'
+    platform: 'Render',
+    pipeline: 'GitHub Actions'
   });
 });
 
