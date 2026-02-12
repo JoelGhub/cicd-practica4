@@ -1,0 +1,17 @@
+# render.yaml
+# Configuración opcional para Render (deploy automático)
+
+services:
+  - type: web
+    name: cicd-demo
+    env: node
+    region: frankfurt
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
