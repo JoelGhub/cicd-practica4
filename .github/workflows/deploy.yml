@@ -1,5 +1,6 @@
 name: CI/CD Pipeline - Multi-Step with Docker
 
+# Trigger: Se ejecuta en push a main o en pull requests
 on:
   push:
     branches:
@@ -9,98 +10,127 @@ on:
       - main
 
 jobs:
-  # Job 1: Tests y validaciones
+  # ============================================
+  # JOB 1: Tests y validaciones de seguridad
+  # ============================================
   test:
     name: Test & Security Scan
     runs-on: ubuntu-latest
     
     steps:
+      # 1. Descargar el código del repositorio
       - name: Checkout code
         uses: actions/checkout@v4
       
+      # 2. Instalar Node.js 18
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
       
+      # 3. Instalar dependencias npm
       - name: Install dependencies
         run: npm install
       
+      # 4. Ejecutar linter (si existe)
       - name: Run linter
         run: npm run lint || echo "No linter configured, skipping..."
-        continue-on-error: true
+        continue-on-error: true  # No falla si no hay linter
       
+      # 5. Ejecutar tests
       - name: Run tests
         run: npm test
       
+      # 6. Escanear vulnerabilidades en dependencias
       - name: Check for vulnerabilities
         run: npm audit --audit-level=high || echo "⚠️  Vulnerabilities found but continuing..."
-        continue-on-error: true
+        continue-on-error: true  # Avisa pero no falla
       
+      # 7. Resumen del job
       - name: Test summary
         run: |
           echo "✅ Tests passed"
           echo "📦 Version: ${{ github.sha }}"
   
-  # Job 2: Build y scan de Docker
+  # ============================================
+  # JOB 2: Build y análisis de Docker
+  # ============================================
   build:
     name: Build & Scan Docker Image
     runs-on: ubuntu-latest
-    needs: test
+    needs: test  # Solo se ejecuta si el job "test" pasa
     
     steps:
+      # 1. Descargar el código
       - name: Checkout code
         uses: actions/checkout@v4
       
+      # 2. Configurar Docker Buildx (para builds avanzados)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
+      # 3. Construir la imagen Docker
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: false
+          push: false  # No subir a registry (solo build local)
           tags: cicd-demo:${{ github.sha }}
-          load: true
-          cache-from: type=gha
+          load: true   # Cargar en Docker local
+          cache-from: type=gha  # Usar cache de GitHub
           cache-to: type=gha,mode=max
       
+      # 4. Escanear vulnerabilidades en la imagen con Trivy
       - name: Run Trivy security scanner
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: cicd-demo:${{ github.sha }}
           format: 'table'
-          exit-code: '0'
+          exit-code: '0'  # No falla en vulnerabilidades (solo avisa)
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
       
+      # 5. Probar que el contenedor funciona
       - name: Test Docker container
         run: |
+          # Iniciar el contenedor
           docker run -d -p 3000:3000 --name test-container cicd-demo:${{ github.sha }}
+          
+          # Esperar que arranque
           sleep 5
+          
+          # Probar el health check
           curl -f http://localhost:3000/health || exit 1
+          
+          # Detener el contenedor
           docker stop test-container
+          
           echo "✅ Docker container works!"
   
-  # Job 3: Deploy (solo en push a main)
+  # ============================================
+  # JOB 3: Deploy a Render (solo en main)
+  # ============================================
   deploy:
     name: Deploy to Render
     runs-on: ubuntu-latest
-    needs: [test, build]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, build]  # Solo se ejecuta si test y build pasan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # Solo en push a main
     
     steps:
+      # 1. Disparar deploy en Render con el webhook
       - name: Trigger Render deploy
         run: |
           curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
           echo "🚀 Deploy triggered on Render"
       
+      # 2. Esperar un poco para que Render procese
       - name: Wait for deploy
         run: |
           echo "⏳ Waiting for Render to deploy..."
           sleep 30
       
+      # 3. Resumen final
       - name: Deployment summary
         run: |
           echo "✅ Deployment triggered successfully!"
