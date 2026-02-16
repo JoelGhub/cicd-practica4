@@ -1,21 +1,38 @@
+# ============================================
+# Pipeline CI/CD Completo con Docker y Deploy
+# ============================================
+# Este workflow automatiza todo el ciclo de vida:
+# 1. Testing y validación de código
+# 2. Build y análisis de seguridad de Docker
+# 3. Despliegue a Render
+# 4. Verificaciones post-deploy
+# 5. Monitoreo continuo y alertas
+# ============================================
+
 name: CI/CD Pipeline - Multi-Step with Docker
 
 # Trigger: Se ejecuta en push a main o en pull requests
 on:
   push:
     branches:
-      - main
+      - main  # Ejecuta el pipeline completo en cada push a main
   pull_request:
     branches:
-      - main
+      - main  # Solo ejecuta tests y build en PRs (no deploy)
 
 jobs:
   # ============================================
   # JOB 1: Tests y validaciones de seguridad
   # ============================================
+  # Primer paso del pipeline: valida la calidad del código
+  # - Instala dependencias de Node.js
+  # - Ejecuta linter y tests unitarios
+  # - Escanea vulnerabilidades con npm audit
+  # Este job debe pasar antes de continuar con el build
+  # ============================================
   test:
     name: Test & Security Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest  # Usa la última versión de Ubuntu
     
     steps:
       # 1. Descargar el código del repositorio
@@ -55,10 +72,17 @@ jobs:
   # ============================================
   # JOB 2: Build y análisis de Docker
   # ============================================
+  # Construye la imagen Docker y verifica su seguridad
+  # - Usa Docker Buildx para builds optimizados
+  # - Implementa cache de GitHub para builds más rápidos
+  # - Escanea vulnerabilidades con Trivy (CRITICAL/HIGH)
+  # - Prueba que el contenedor funcione correctamente
+  # Solo se ejecuta si los tests pasaron exitosamente
+  # ============================================
   build:
     name: Build & Scan Docker Image
     runs-on: ubuntu-latest
-    needs: test  # Solo se ejecuta si el job "test" pasa
+    needs: test  # Dependencia: espera a que 'test' termine con éxito
     
     steps:
       # 1. Descargar el código
@@ -81,15 +105,20 @@ jobs:
           cache-to: type=gha,mode=max
       
       # 4. Escanear vulnerabilidades en la imagen con Trivy
+      # Trivy es un escáner de seguridad que detecta:
+      # - Vulnerabilidades en paquetes del sistema operativo
+      # - Vulnerabilidades en bibliotecas de aplicación
+      # - Solo reporta severidades CRITICAL y HIGH
+      # - ignore-unfixed: ignora vulnerabilidades sin parche disponible
       - name: Run Trivy security scanner
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: cicd-demo:${{ github.sha }}
-          format: 'table'
+          format: 'table'  # Formato de salida en tabla legible
           exit-code: '0'  # No falla en vulnerabilidades (solo avisa)
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true  # Ignora CVEs sin fix disponible
+          vuln-type: 'os,library'  # Tipos de vulnerabilidades a buscar
+          severity: 'CRITICAL,HIGH'  # Solo reporta severidades altas
       
       # 5. Probar que el contenedor funciona
       - name: Test Docker container
@@ -111,11 +140,18 @@ jobs:
   # ============================================
   # JOB 3: Deploy a Render (solo en main)
   # ============================================
+  # Despliega la aplicación en producción usando Render
+  # - Solo se ejecuta en push a la rama main (no en PRs)
+  # - Usa el webhook de Render para trigger automático
+  # - Render construirá y desplegará desde el repo
+  # - Espera 30s para que Render inicie el proceso
+  # Requiere: RENDER_DEPLOY_HOOK en secrets de GitHub
+  # ============================================
   deploy:
     name: Deploy to Render
     runs-on: ubuntu-latest
-    needs: [test, build]  # Solo se ejecuta si test y build pasan
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # Solo en push a main
+    needs: [test, build]  # Requiere que ambos jobs anteriores pasen
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # Solo deploys en main
     
     steps:
       # 1. Disparar deploy en Render con el webhook
@@ -141,11 +177,20 @@ jobs:
   # ============================================
   # JOB 4: Post-Deployment Checks
   # ============================================
+  # Verifica que el deploy fue exitoso y la app funciona
+  # - Espera 90s para que Render complete el despliegue
+  # - Verifica el endpoint /health (debe retornar 200)
+  # - Prueba el endpoint principal
+  # - Mide el tiempo de respuesta (debe ser < 5s)
+  # - Genera reporte de verificación
+  # Si algún check falla, el workflow se marca como failed
+  # Requiere: RENDER_APP_URL en secrets de GitHub
+  # ============================================
   post-deploy-checks:
     name: Post-Deployment Verification
     runs-on: ubuntu-latest
-    needs: deploy  # Solo se ejecuta después del deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: deploy  # Espera a que el deploy termine
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # Solo en main
     
     steps:
       # 1. Esperar a que Render complete el deploy
@@ -155,6 +200,11 @@ jobs:
           sleep 90  # Esperar 90 segundos para que Render termine
       
       # 2. Verificar que la aplicación responde
+      # El health check es crucial para confirmar que:
+      # - El servicio está corriendo
+      # - Responde a peticiones HTTP
+      # - El endpoint /health retorna 200 OK
+      # Si falla, el workflow se detiene aquí
       - name: Health check
         run: |
           echo "🏥 Running health check..."
@@ -164,7 +214,7 @@ jobs:
             echo "✅ Health check passed (HTTP $RESPONSE)"
           else
             echo "❌ Health check failed (HTTP $RESPONSE)"
-            exit 1
+            exit 1  # Falla el workflow si health check no pasa
           fi
       
       # 3. Verificar endpoint principal
@@ -184,6 +234,10 @@ jobs:
           fi
       
       # 4. Verificar tiempo de respuesta
+      # Mide el rendimiento de la aplicación
+      # - Threshold: debe responder en menos de 5 segundos
+      # - Si es más lento, emite una advertencia (pero no falla)
+      # - Útil para detectar problemas de rendimiento temprano
       - name: Performance check
         run: |
           echo "⚡ Checking response time..."
@@ -195,7 +249,7 @@ jobs:
           if (( $(echo "$RESPONSE_TIME < 5.0" | bc -l) )); then
             echo "✅ Performance check passed"
           else
-            echo "⚠️  Slow response time detected"
+            echo "⚠️  Slow response time detected (pero continúa)"
           fi
       
       # 5. Resumen de verificación
@@ -214,14 +268,27 @@ jobs:
   # ============================================
   # JOB 5: Monitoring & Notifications
   # ============================================
+  # Monitorea la estabilidad de la aplicación desplegada
+  # - Hace 6 checks en 3 minutos (cada 30 segundos)
+  # - Verifica disponibilidad continua del servicio
+  # - Recopila métricas del despliegue
+  # - Genera notificaciones de éxito
+  # - Crea un issue automático en GitHub si detecta fallas
+  # Solo se ejecuta si todos los checks anteriores pasaron
+  # ============================================
   monitoring:
     name: Setup Monitoring & Alerts
     runs-on: ubuntu-latest
-    needs: post-deploy-checks
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: post-deploy-checks  # Requiere verificaciones exitosas
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # Solo en main
     
     steps:
       # 1. Verificar disponibilidad continua (cada 30s durante 3 minutos)
+      # Este monitoreo continuo detecta:
+      # - Problemas de estabilidad tras el deploy
+      # - Caídas intermitentes del servicio
+      # - Issues de warm-up en Render
+      # Criterio: falla si más de 2 de 6 checks fallan (>33% error rate)
       - name: Continuous availability check
         run: |
           echo "📊 Running continuous monitoring for 3 minutes..."
@@ -229,6 +296,7 @@ jobs:
           SUCCESS_COUNT=0
           FAIL_COUNT=0
           
+          # Loop de 6 iteraciones = 6 checks en ~3 minutos
           for i in {1..6}; do
             echo "Check #$i of 6..."
             
@@ -242,7 +310,7 @@ jobs:
               echo "  ❌ Failed (HTTP $RESPONSE)"
             fi
             
-            sleep 30
+            sleep 30  # Esperar 30 segundos entre checks
           done
           
           echo ""
@@ -263,15 +331,19 @@ jobs:
           echo "🔗 Render Logs: https://dashboard.render.com"
       
       # 3. Métricas de despliegue
+      # Registra información clave del despliegue para:
+      # - Auditoría y trazabilidad
+      # - Debugging en caso de problemas
+      # - Estadísticas de CI/CD
       - name: Deployment metrics
         run: |
           echo "📊 DEPLOYMENT METRICS"
           echo "======================================"
           echo "🕐 Deploy Time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo "🔢 Build Number: ${{ github.run_number }}"
-          echo "📦 Commit: ${{ github.sha }}"
-          echo "👤 Triggered by: ${{ github.actor }}"
-          echo "🌿 Branch: ${{ github.ref_name }}"
+          echo "🔢 Build Number: ${{ github.run_number }}"  # Número incremental del workflow
+          echo "📦 Commit: ${{ github.sha }}"  # Hash del commit desplegado
+          echo "👤 Triggered by: ${{ github.actor }}"  # Usuario que hizo el push
+          echo "🌿 Branch: ${{ github.ref_name }}"  # Rama (siempre será 'main' aquí)
           echo "======================================"
       
       # 4. Notificación de éxito (usando GitHub)
@@ -290,8 +362,14 @@ jobs:
           echo "  3. Check application logs if needed"
       
       # 5. Crear issue si hay problemas (opcional)
+      # Sistema de alertas automático:
+      # - Solo se ejecuta si el workflow falla (if: failure())
+      # - Crea un issue en GitHub con detalles del error
+      # - Etiquetas automáticas: 'deployment' y 'bug'
+      # - Incluye link directo al workflow run fallido
+      # - Útil para tracking y resolución de problemas
       - name: Create issue on failure
-        if: failure()
+        if: failure()  # Solo se ejecuta si algún step anterior falló
         uses: actions/github-script@v7
         with:
           script: |
